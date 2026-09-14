@@ -1,7 +1,7 @@
 """On-chain realized profit indicator fetchers.
 
 Source:
-- BGeometrics free API (daily SOPR family endpoints)
+- BGeometrics API (recent seven days require an active subscription)
 """
 
 from __future__ import annotations
@@ -130,7 +130,9 @@ def fetch_bgeometrics_indicator(
     spec = BGEOMETRICS_METRICS[metric_name]
     endpoint = spec["endpoint"]
     url = f"{BGEOMETRICS_BASE_URL}/{endpoint}"
-    headers = {"x-api-key": api_key} if api_key else None
+    # Current API documentation specifies Bearer authentication. The legacy
+    # x-api-key header can silently return the delayed public data tier.
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
     try:
         payload = get_json(url, timeout=30, headers=headers, proxies=proxies)
     except requests.exceptions.HTTPError as exc:
