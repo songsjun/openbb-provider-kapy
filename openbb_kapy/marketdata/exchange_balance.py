@@ -1,7 +1,7 @@
 """Exchange-balance snapshot helper (provider-native).
 
 Data source:
-- Coinglass Balance page via Puppeteer
+- Coinglass Balance page via an isolated, owned headless Puppeteer browser
 - Browser script: /workspace/openbb-decision-pipeline/browser/fetch_exchange_balance.js
 
 No legacy raw bridge fallback.
@@ -15,22 +15,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import requests
-
 
 class ExchangeBalanceFetchError(RuntimeError):
     """Raised when exchange balance fetch fails."""
-
-
-def _browser_ws_endpoint(cdp_http: str | None = None) -> str:
-    cdp_http = cdp_http or os.getenv("COINGLASS_CDP_HTTP") or os.getenv("CDP_HTTP") or "http://localhost:19222"
-    r = requests.get(f"{cdp_http}/json/version", timeout=10)
-    r.raise_for_status()
-    obj = r.json()
-    ws = obj.get("webSocketDebuggerUrl")
-    if not ws:
-        raise ExchangeBalanceFetchError("webSocketDebuggerUrl missing from CDP /json/version")
-    return str(ws)
 
 
 def _fetch_script_path() -> Path:
@@ -55,14 +42,13 @@ def _fetch_script_path() -> Path:
 
 
 def fetch_exchange_balance_snapshot() -> dict[str, Any]:
-    ws = _browser_ws_endpoint()
     fetch_script = _fetch_script_path()
 
     node_script = r"""
 const mod = require(process.env.FETCH_SCRIPT);
 (async()=>{
   try {
-    const data = await mod.fetchAllBalances(process.env.WS_ENDPOINT);
+    const data = await mod.fetchAllBalances();
     console.log('__JSON__' + JSON.stringify(data));
   } catch (e) {
     console.log('__JSON__' + JSON.stringify({error: String(e?.message || e)}));
@@ -76,7 +62,7 @@ const mod = require(process.env.FETCH_SCRIPT);
         capture_output=True,
         text=True,
         timeout=420,
-        env={**os.environ, **{"WS_ENDPOINT": ws, "FETCH_SCRIPT": str(fetch_script)}},
+        env={**os.environ, "FETCH_SCRIPT": str(fetch_script)},
     )
 
     out = (p.stdout or "")
@@ -93,6 +79,9 @@ const mod = require(process.env.FETCH_SCRIPT);
         raise ExchangeBalanceFetchError(f"no JSON payload from fetch script; rc={p.returncode}; stderr={err[:300]}")
 
     payload = json.loads(payload_line)
+    if p.returncode:
+        detail = payload.get("error") or err[:300]
+        raise ExchangeBalanceFetchError(f"fetch script failed; rc={p.returncode}; error={detail}")
     if payload.get("error"):
         raise ExchangeBalanceFetchError(f"fetch script error: {payload.get('error')}")
 

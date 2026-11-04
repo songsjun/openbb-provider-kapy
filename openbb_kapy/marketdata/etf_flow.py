@@ -1,7 +1,7 @@
 """ETF flow snapshot fetcher (provider-style helper).
 
 Data source:
-- https://btcetfdata.com/v1/current.json
+- https://btcetfdata.com/etfs.v1.current.json
 
 Returns normalized structure aligned with previous `latest-simple.json` format:
 {
@@ -36,7 +36,7 @@ def _safe_float(v: Any) -> float | None:
 def fetch_etf_flow_snapshot() -> dict[str, Any]:
     # 1. Fetch ETF data
     try:
-        payload = get_json("https://btcetfdata.com/v1/current.json", timeout=15)
+        payload = get_json("https://btcetfdata.com/etfs.v1.current.json", timeout=15)
     except Exception as e:
         raise EtfFlowFetchError(f"Failed to fetch btcetfdata: {e}") from e
 

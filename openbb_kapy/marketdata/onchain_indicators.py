@@ -6,6 +6,7 @@ Source:
 
 from __future__ import annotations
 
+import math
 import os
 from datetime import date, datetime, timezone
 from typing import Any
@@ -150,6 +151,18 @@ def fetch_bgeometrics_indicator(
             continue
 
         current = latest_by_date.get(obs_date)
+        if current is not None:
+            same_value = value == current["value"] or (
+                math.isnan(value) and math.isnan(current["value"])
+            )
+            if not same_value:
+                # A daily response with differing same-day observations has no
+                # documented final-value rule. Do not silently select an intraday
+                # observation by timestamp (or payload order) for immutable storage.
+                raise OnchainIndicatorFetchError(
+                    f"BGeometrics {endpoint} data quality: conflicting daily values at {obs_date}; "
+                    "same-day observation semantics require verification"
+                )
         if current is None or _sort_key(item) >= _sort_key(current["raw_item"]):
             latest_by_date[obs_date] = {
                 "symbol": "BTC",
