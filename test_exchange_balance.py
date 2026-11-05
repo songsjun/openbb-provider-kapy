@@ -24,6 +24,7 @@ class ExchangeBalanceBridgeTests(unittest.TestCase):
         self.assertEqual(payload["btc"]["asset"], "BTC")
         self.assertEqual(payload["_source"], "kapy-provider:coinglass-puppeteer")
         self.assertNotIn("WS_ENDPOINT", run.call_args.args[0][2])
+        self.assertIn("collectionMethod: 'api'", run.call_args.args[0][2])
 
     def test_failed_process_cannot_publish_an_apparently_successful_payload(self):
         result = subprocess.CompletedProcess([], 2, '__JSON__{"btc":{},"eth":{}}', "failed")

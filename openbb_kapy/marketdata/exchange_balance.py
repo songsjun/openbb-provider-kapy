@@ -1,7 +1,8 @@
 """Exchange-balance snapshot helper (provider-native).
 
 Data source:
-- Coinglass Balance page via an isolated, owned headless Puppeteer browser
+- CoinGlass's same balance-list endpoint via its official page API client in an
+  isolated, owned headless Puppeteer browser; no table-rendering dependency
 - Browser script: /workspace/openbb-decision-pipeline/browser/fetch_exchange_balance.js
 
 No legacy raw bridge fallback.
@@ -48,7 +49,7 @@ def fetch_exchange_balance_snapshot() -> dict[str, Any]:
 const mod = require(process.env.FETCH_SCRIPT);
 (async()=>{
   try {
-    const data = await mod.fetchAllBalances();
+    const data = await mod.fetchAllBalances(undefined, { collectionMethod: 'api' });
     console.log('__JSON__' + JSON.stringify(data));
   } catch (e) {
     console.log('__JSON__' + JSON.stringify({error: String(e?.message || e)}));
