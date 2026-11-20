@@ -33,6 +33,27 @@ def _safe_float(v: Any) -> float | None:
     except Exception:
         return None
 
+# 单日 |change| 超过前一日持仓的该比例即视为上游异常（真实单日赎回从未接近此量级）
+MAX_DAILY_CHANGE_FRACTION = 0.5
+
+
+def _flow_rejection_reason(holdings: float | None, flow_btc: float) -> str | None:
+    """Return why a fund's daily change is untrustworthy, or None if it passes.
+
+    btcetfdata 的 change = 当日 holdings - 前一日 holdings。上游抓取失败时
+    holdings 会被写成 0，change 随之等于"全部持仓流出"（例：2026-11-19 BTCC
+    holdings=0, change=-17,747 BTC）。
+    """
+    if holdings is None:
+        return "holdings_missing"
+    if holdings <= 0:
+        return "holdings_non_positive"
+    prior = holdings - flow_btc
+    if prior > 0 and abs(flow_btc) > MAX_DAILY_CHANGE_FRACTION * prior:
+        return "change_exceeds_half_prior_holdings"
+    return None
+
+
 def fetch_etf_flow_snapshot() -> dict[str, Any]:
     # 1. Fetch ETF data
     try:
@@ -58,9 +79,22 @@ def fetch_etf_flow_snapshot() -> dict[str, Any]:
     btc_holdings = sum((_safe_float(item.get("holdings")) or 0) for item in data.values())
 
     top_flows: list[dict[str, Any]] = []
+    rejected_flows: list[dict[str, Any]] = []
     for ticker, item in data.items():
         flow_btc = _safe_float(item.get("change"))
         if flow_btc is None:
+            continue
+
+        holdings = _safe_float(item.get("holdings"))
+        reason = _flow_rejection_reason(holdings, flow_btc)
+        if reason is not None:
+            rejected_flows.append({
+                "ticker": ticker.upper(),
+                "flow_btc": flow_btc,
+                "holdings": holdings,
+                "dt": item.get("dt"),
+                "reason": reason,
+            })
             continue
 
         flow_usd_million = None
@@ -87,5 +121,7 @@ def fetch_etf_flow_snapshot() -> dict[str, Any]:
         "btc_price": btc_price,
         "trends": {},
         "top_flows": top_flows,
+        # 被守卫剔除的条目（不进入 top_flows / 不落库），保留以便审计
+        "rejected_flows": rejected_flows,
         "raw_providers": list(data.keys()),
     }
