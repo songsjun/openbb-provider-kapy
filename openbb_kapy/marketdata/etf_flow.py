@@ -8,7 +8,7 @@ Returns normalized structure aligned with previous `latest-simple.json` format:
   timestamp,
   source,
   updated_date,
-  btc_holdings,
+  btc_holdings,  # None if a fund's holdings cannot be established
   btc_price,
   trends,
   top_flows: [{ticker, flow_btc, flow_usd_million?}]
@@ -17,7 +17,7 @@ Returns normalized structure aligned with previous `latest-simple.json` format:
 
 from __future__ import annotations
 
-import json
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -27,11 +27,15 @@ from .http import get_json
 class EtfFlowFetchError(RuntimeError):
     """Raised when ETF flow fetch fails."""
 
+
 def _safe_float(v: Any) -> float | None:
-    try:
-        return float(v)
-    except Exception:
+    if isinstance(v, bool):
         return None
+    try:
+        value = float(v)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return value if math.isfinite(value) else None
 
 # 单日 |change| 超过前一日持仓的该比例即视为上游异常（真实单日赎回从未接近此量级）
 MAX_DAILY_CHANGE_FRACTION = 0.5
@@ -49,9 +53,26 @@ def _flow_rejection_reason(holdings: float | None, flow_btc: float) -> str | Non
     if holdings <= 0:
         return "holdings_non_positive"
     prior = holdings - flow_btc
-    if prior > 0 and abs(flow_btc) > MAX_DAILY_CHANGE_FRACTION * prior:
+    if prior <= 0:
+        # 上游从 0 恢复的当天：holdings=真实值, change=+全部持仓，是假流入。
+        # Current API 无首发标记。保留有效持仓，将无法确认的全额流入记入 rejected_flows。
+        return "prior_holdings_non_positive"
+    if abs(flow_btc) > MAX_DAILY_CHANGE_FRACTION * prior:
         return "change_exceeds_half_prior_holdings"
     return None
+
+
+def _effective_holdings(holdings: float | None, flow_btc: float | None) -> tuple[float | None, str | None]:
+    """Holdings to count in the total, plus a note when the reported value was replaced.
+
+    上游 holdings=0 且 change<0 时，用 -change 还原前一日持仓
+    （例：BTCC holdings=0, change=-17,747 → 17,747）。无法还原时，合计不可用。
+    """
+    if holdings is not None and holdings > 0:
+        return holdings, None
+    if holdings == 0 and flow_btc is not None and flow_btc < 0:
+        return -flow_btc, "restored_prior_holdings"
+    return None, "holdings_unusable"
 
 
 def fetch_etf_flow_snapshot() -> dict[str, Any]:
@@ -75,8 +96,25 @@ def fetch_etf_flow_snapshot() -> dict[str, Any]:
     dates = [item["dt"] for item in data.values() if "dt" in item and item["dt"]]
     updated_date = max(dates) if dates else datetime.utcnow().strftime("%Y-%m-%d")
 
-    # Calculate Total holdings
-    btc_holdings = sum((_safe_float(item.get("holdings")) or 0) for item in data.values())
+    # Calculate Total holdings（无效持仓用前一日值还原，替换记录在 holdings_adjustments）
+    effective_holdings: list[float] = []
+    fund_holdings: dict[str, float | None] = {}
+    holdings_adjustments: list[dict[str, Any]] = []
+    for ticker, item in data.items():
+        reported = _safe_float(item.get("holdings"))
+        effective, note = _effective_holdings(reported, _safe_float(item.get("change")))
+        if effective is not None:
+            effective_holdings.append(effective)
+        fund_holdings[ticker.upper()] = reported
+        if note is not None:
+            holdings_adjustments.append({
+                "ticker": ticker.upper(),
+                "reported_holdings": reported,
+                "used_holdings": effective,
+                "dt": item.get("dt"),
+                "reason": note,
+            })
+    btc_holdings = sum(effective_holdings) if len(effective_holdings) == len(data) else None
 
     top_flows: list[dict[str, Any]] = []
     rejected_flows: list[dict[str, Any]] = []
@@ -118,6 +156,9 @@ def fetch_etf_flow_snapshot() -> dict[str, Any]:
         "source": "kapy-provider:btcetfdata.com",
         "updated_date": updated_date,
         "btc_holdings": btc_holdings,
+        # 逐基金上报持仓原值（未调整），供事后核查合计跳变
+        "fund_holdings": fund_holdings,
+        "holdings_adjustments": holdings_adjustments,
         "btc_price": btc_price,
         "trends": {},
         "top_flows": top_flows,
