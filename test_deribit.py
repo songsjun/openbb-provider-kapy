@@ -1,7 +1,7 @@
 import asyncio
 from openbb_kapy.utils.deribit_client import DeribitClient
 
-async def test():
+async def main():
     print("Testing get_instruments BTC...")
     instruments = await DeribitClient.get_instruments("BTC")
     print(f"Got {len(instruments)} BTC options.")
@@ -14,4 +14,5 @@ async def test():
     if book:
         print("Sample book summary:", [b for b in book if b.get('instrument_name') == instruments[0]['instrument_name']][:1])
 
-asyncio.run(test())
+if __name__ == "__main__":
+    asyncio.run(main())
