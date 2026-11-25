@@ -160,9 +160,14 @@ def fetch_derivatives_snapshot() -> dict[str, Any]:
         coinalyze_key = os.environ.get("OPENBB_COINALYZE_API_KEY", "")
         if coinalyze_key:
             now_ts = int(datetime.now(timezone.utc).timestamp())
+            # Daily buckets start at 00:00 UTC. A 24h window drops yesterday's bucket,
+            # so its stored value would stay at the last intraday partial. Three days
+            # lets the next runs overwrite closed days with their final totals, and the
+            # still-open bucket for today is skipped instead of stored as a 24h total.
+            today_start = now_ts - now_ts % 86400
             liq = get_json(
                 "https://api.coinalyze.net/v1/liquidation-history",
-                params={"symbols": "BTCUSD_PERP.A", "interval": "daily", "from": str(now_ts - 86400), "to": str(now_ts)},
+                params={"symbols": "BTCUSD_PERP.A", "interval": "daily", "from": str(now_ts - 3 * 86400), "to": str(now_ts)},
                 headers={"api_key": coinalyze_key},
                 timeout=15,
             )
@@ -170,6 +175,8 @@ def fetch_derivatives_snapshot() -> dict[str, Any]:
                 for item in liq:
                     history = item.get("history") or []
                     for h in history:
+                        if not isinstance(h.get("t"), (int, float)) or h["t"] >= today_start:
+                            continue
                         out["coinalyze"]["liquidations"].append({
                             "symbol": item.get("symbol", "BTCUSD_PERP.A"),
                             "timestamp": h.get("t"),
